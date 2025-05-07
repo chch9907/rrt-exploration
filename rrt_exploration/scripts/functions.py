@@ -3,24 +3,20 @@ import tf
 from numpy import array
 import actionlib
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
-from actionlib_msgs.msg import GoalStatusArray
 from nav_msgs.srv import GetPlan
-from nav_msgs.msg import Odometry
 from geometry_msgs.msg import PoseStamped
 from numpy import floor
 from numpy.linalg import norm
 from numpy import inf
-import numpy as np
 # ________________________________________________________________________________
 
 
 class robot:
+    goal = MoveBaseGoal()
+    start = PoseStamped()
+    end = PoseStamped()
+
     def __init__(self, name):
-        #################################################################
-        self.goal  = MoveBaseGoal()
-        self.start = PoseStamped()
-        self.end   = PoseStamped()
-        #################################################################     
         self.assigned_point = []
         self.name = name
         self.global_frame = rospy.get_param('~global_frame', '/map')
@@ -44,47 +40,14 @@ class robot:
         self.client = actionlib.SimpleActionClient(
             self.name+'/move_base', MoveBaseAction)
         self.client.wait_for_server()
-        ###################################################################
-        self.goal.target_pose.header.frame_id = self.global_frame
-        self.goal.target_pose.header.stamp = rospy.Time.now()
-        ###################################################################
-        self.total_distance = 0
-        self.first_run = True
-        self.movebase_status = 0
-        self.sub       = rospy.Subscriber(name + "/odom", Odometry, self.odom_callback)
-        #####################################################################
-        self.position = array([trans[0], trans[1]])
-        self.previous_x = 0
-        self.previous_y = 0
-        self.assigned_point = self.position
-        ######################################################################
+        robot.goal.target_pose.header.frame_id = self.global_frame
+        robot.goal.target_pose.header.stamp = rospy.Time.now()
+
         rospy.wait_for_service(self.name+self.plan_service)
         self.make_plan = rospy.ServiceProxy(
             self.name+self.plan_service, GetPlan)
-        self.start.header.frame_id = self.global_frame
-        self.end.header.frame_id = self.global_frame
-
-    def odom_callback(self, data):
-        cond = 0
-        while cond == 0:
-            try:
-                (trans, rot) = self.listener.lookupTransform(
-                    self.global_frame, data.header.frame_id, rospy.Time(0))
-                cond = 1
-            except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-                cond == 0
-
-        if self.first_run == True:
-            self.previous_x = trans[0]
-            self.previous_y = trans[1]
-        x = trans[0]
-        y = trans[1]
-        d_increment = np.sqrt(((x - self.previous_x)*(x - self.previous_x)) + ((y - self.previous_y)*(y - self.previous_y)))
-        self.total_distance = self.total_distance + d_increment
-        # print("Total distance traveled is %.2f" %(self.total_distance))
-        self.first_run = False
-        self.previous_x = x
-        self.previous_y = y
+        robot.start.header.frame_id = self.global_frame
+        robot.end.header.frame_id = self.global_frame
 
     def getPosition(self):
         cond = 0
@@ -99,12 +62,11 @@ class robot:
         return self.position
 
     def sendGoal(self, point):
-        self.goal.target_pose.pose.position.x = point[0]
-        self.goal.target_pose.pose.position.y = point[1]
-        self.goal.target_pose.pose.orientation.w = 1.0
-        self.client.send_goal(self.goal)
+        robot.goal.target_pose.pose.position.x = point[0]
+        robot.goal.target_pose.pose.position.y = point[1]
+        robot.goal.target_pose.pose.orientation.w = 1.0
+        self.client.send_goal(robot.goal)
         self.assigned_point = array(point)
-        print('goal position at: %f %f' %(point[0], point[1]))
 
     def cancelGoal(self):
         self.client.cancel_goal()
@@ -114,13 +76,13 @@ class robot:
         return self.client.get_state()
 
     def makePlan(self, start, end):
-        self.start.pose.position.x = start[0]
-        self.start.pose.position.y = start[1]
-        self.end.pose.position.x = end[0]
-        self.end.pose.position.y = end[1]
-        start = self.listener.transformPose(self.name+'/map', self.start)
-        end = self.listener.transformPose(self.name+'/map', self.end)
-        plan = self.make_plan(start=start, goal=end, tolerance=0.1)
+        robot.start.pose.position.x = start[0]
+        robot.start.pose.position.y = start[1]
+        robot.end.pose.position.x = end[0]
+        robot.end.pose.position.y = end[1]
+        start = self.listener.transformPose(self.name+'/map', robot.start)
+        end = self.listener.transformPose(self.name+'/map', robot.end)
+        plan = self.make_plan(start=start, goal=end, tolerance=0.0)
         return plan.plan.poses
 # ________________________________________________________________________________
 
@@ -140,13 +102,13 @@ def point_of_index(mapData, i):
     y = mapData.info.origin.position.y + \
         (i/mapData.info.width)*mapData.info.resolution
     x = mapData.info.origin.position.x + \
-        (float(i-(int(i/mapData.info.width)*(mapData.info.width)))*mapData.info.resolution)
+        (i-(i/mapData.info.width)*(mapData.info.width))*mapData.info.resolution
     return array([x, y])
 # ________________________________________________________________________________
 
 
 def informationGain(mapData, point, r):
-    infoGain = 0.0
+    infoGain = 0
     index = index_of_point(mapData, point)
     r_region = int(r/mapData.info.resolution)
     init_index = index-r_region*(mapData.info.width+1)
@@ -157,7 +119,7 @@ def informationGain(mapData, point, r):
         for i in range(start, end+1):
             if (i >= 0 and i < limit and i < len(mapData.data)):
                 if(mapData.data[i] == -1 and norm(array(point)-point_of_index(mapData, i)) <= r):
-                    infoGain += 1.0
+                    infoGain += 1
     return infoGain*(mapData.info.resolution**2)
 # ________________________________________________________________________________
 
@@ -176,7 +138,7 @@ def discount(mapData, assigned_pt, centroids, infoGain, r):
                     current_pt = centroids[j]
                     if(mapData.data[i] == -1 and norm(point_of_index(mapData, i)-current_pt) <= r and norm(point_of_index(mapData, i)-assigned_pt) <= r):
                         # this should be modified, subtract the area of a cell, not 1
-                        infoGain[j] -= 1.0
+                        infoGain[j] -= 1
     return infoGain
 # ________________________________________________________________________________
 

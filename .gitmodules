@@ -1,0 +1,3 @@
+[submodule "distance_map"]
+	path = distance_map
+	url = https://github.com/artivis/distance_map.git

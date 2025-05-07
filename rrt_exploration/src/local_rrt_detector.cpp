@@ -55,7 +55,7 @@ points.points.push_back(p);
 
 int main(int argc, char **argv)
 {
-
+  ROS_INFO_STREAM("start local rrt");
   unsigned long init[4] = {0x123, 0x234, 0x345, 0x456}, length = 7;
   MTRand_int32 irand(init, length); // 32-bit int generator
 // this is an example of initializing by an array
@@ -65,18 +65,41 @@ int main(int argc, char **argv)
 
 // generate the same numbers as in the original C test program
   ros::init(argc, argv, "local_rrt_frontier_detector");
+  ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME,ros::console::levels::Debug);
   ros::NodeHandle nh;
   
   // fetching all parameters
   float eta,init_map_x,init_map_y,range;
+  float cur_x, cur_y, x_range, y_range;
   std::string map_topic,base_frame_topic;
   
   std::string ns;
   ns=ros::this_node::getName();
 
   ros::param::param<float>(ns+"/eta", eta, 0.5);
-  ros::param::param<std::string>(ns+"/map_topic", map_topic, "/robot_1/map"); 
+  ros::param::param<float>(ns+"/x_range", x_range, 8);
+  ros::param::param<float>(ns+"/y_range", y_range, 8);
+  ros::param::param<float>(ns+"/cur_x", cur_x, 0);
+  ros::param::param<float>(ns+"/cur_y", cur_y, 0);
+    
+  ros::param::param<std::string>(ns+"/global_map", map_topic, "/robot_1/map"); 
   ros::param::param<std::string>(ns+"/robot_frame", base_frame_topic, "/robot_1/base_link"); 
+
+  //!------- define the boundary of rrt exploration ---------
+  // scene 1
+  // int lx = 72;
+  // int rx =  0;
+  // int ly = 3; 
+  // int ry = -4; 
+
+  // scene 2
+  int lx = 83;
+  int rx =  5.6;
+  int ly = 40;
+  int ry = -38; 
+  //!---------------------------------------------------------
+
+
 //---------------------------------------------------------------
 ros::Subscriber sub= nh.subscribe(map_topic, 100 ,mapCallBack);	
 ros::Subscriber rviz_sub= nh.subscribe("/clicked_point", 100 ,rvizCallBack);	
@@ -127,15 +150,37 @@ line.color.a = 1.0;
 points.lifetime = ros::Duration();
 line.lifetime = ros::Duration();
 
+
+geometry_msgs::Point lefttop, righttop, rightdown, leftdown, cur;  
+lefttop.x=lx;
+lefttop.y=ly;
+points.points.push_back(lefttop);
+
+righttop.x=rx;
+righttop.y=ly;
+points.points.push_back(righttop);
+ 
+rightdown.x=rx;
+rightdown.y=ry;
+points.points.push_back(rightdown);
+ 
+leftdown.x=lx;
+leftdown.y=ry;
+points.points.push_back(leftdown);
+
+// free space point
+cur.x=cur_x;
+cur.y=cur_y;
+points.points.push_back(cur);
+
 geometry_msgs::Point p;  
+// while(points.points.size()<5)
+// {
+// ros::spinOnce();
 
-
-while(points.points.size()<5)
-{
-ros::spinOnce();
-
+// pub.publish(points) ;
+// }
 pub.publish(points) ;
-}
 
 
 
@@ -181,15 +226,12 @@ pub.publish(points) ;
 
 
 
-
-
-
 std::vector<float> frontiers;
 int i=0;
 float xr,yr;
 std::vector<float> x_rand,x_nearest,x_new;
-
 tf::TransformListener listener;
+int isBlack = 0;
 // Main loop
 while (ros::ok()){
 

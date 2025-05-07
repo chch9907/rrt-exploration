@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 #--------Include modules---------------
 from copy import copy
@@ -19,6 +19,9 @@ from numpy.linalg import norm
 # Subscribers' callbacks------------------------------
 mapData=OccupancyGrid()
 frontiers=[]
+global1=OccupancyGrid()
+global2=OccupancyGrid()
+global3=OccupancyGrid()
 globalmaps=[]
 def callBack(data):
 	global frontiers
@@ -32,27 +35,28 @@ def mapCallBack(data):
 # Node----------------------------------------------
 
 def node():
-	global frontiers,mapData,globalmaps
+	global frontiers,mapData,global1,global2,global3,globalmaps
 	rospy.init_node('assigner', anonymous=False)
 	
 	# fetching all parameters
-	map_topic								= rospy.get_param('~map_topic','/map')
-	info_radius							= rospy.get_param('~info_radius',1.0)					#this can be smaller than the laser scanner range, >> smaller >>less computation time>> too small is not good, info gain won't be accurate
-	info_multiplier					= rospy.get_param('~info_multiplier',3.0)		
-	hysteresis_radius				= rospy.get_param('~hysteresis_radius',3.0)			#at least as much as the laser scanner range
-	hysteresis_gain					= rospy.get_param('~hysteresis_gain',2.0)				#bigger than 1 (biase robot to continue exploring current region
-	frontiers_topic					= rospy.get_param('~frontiers_topic','/filtered_points')	
-	delay_after_assignement	= rospy.get_param('~delay_after_assignement',0.5)
-	rateHz 									= rospy.get_param('~rate',100)
-	robot_namelist          = rospy.get_param('~robot_namelist', "robot1")
+	map_topic= rospy.get_param('~map_topic','/map')
+	info_radius= rospy.get_param('~info_radius',1.0)					#this can be smaller than the laser scanner range, >> smaller >>less computation time>> too small is not good, info gain won't be accurate
+	info_multiplier=rospy.get_param('~info_multiplier',3.0)		
+	hysteresis_radius=rospy.get_param('~hysteresis_radius',3.0)			#at least as much as the laser scanner range
+	hysteresis_gain=rospy.get_param('~hysteresis_gain',2.0)				#bigger than 1 (biase robot to continue exploring current region
+	frontiers_topic= rospy.get_param('~frontiers_topic','/filtered_points')	
+	n_robots = rospy.get_param('~n_robots',1)
+	namespace = rospy.get_param('~namespace','')
+	namespace_init_count = rospy.get_param('namespace_init_count',1)
+	delay_after_assignement=rospy.get_param('~delay_after_assignement',0.5)
+	rateHz = rospy.get_param('~rate',100)
 	
 	rate = rospy.Rate(rateHz)
 #-------------------------------------------
 	rospy.Subscriber(map_topic, OccupancyGrid, mapCallBack)
 	rospy.Subscriber(frontiers_topic, PointArray, callBack)
 #---------------------------------------------------------------------------------------------------------------
-	# perform name splitting for the robot
-	robot_namelist = robot_namelist.split(',')
+		
 # wait if no frontier is received yet 
 	while len(frontiers)<1:
 		pass
@@ -62,10 +66,12 @@ def node():
 		pass
 
 	robots=[]
-	for i in range(0,len(robot_namelist)):
-		robots.append(robot(name=robot_namelist[i]))
-
-	for i in range(0,len(robot_namelist)):
+	if len(namespace)>0:
+		for i in range(0,n_robots):
+			robots.append(robot(namespace+str(i+namespace_init_count)))
+	elif len(namespace)==0:
+			robots.append(robot(namespace))
+	for i in range(0,n_robots):
 		robots[i].sendGoal(robots[i].getPosition())
 #-------------------------------------------------------------------------
 #---------------------     Main   Loop     -------------------------------
@@ -81,7 +87,7 @@ def node():
 #get number of available/busy robots
 		na=[] #available robots
 		nb=[] #busy robots
-		for i in range(0,len(robot_namelist)):
+		for i in range(0,n_robots):
 			if (robots[i].getState()==1):
 				nb.append(i)
 			else:
@@ -131,13 +137,13 @@ def node():
 		
 		rospy.loginfo("revenue record: "+str(revenue_record))	
 		rospy.loginfo("centroid record: "+str(centroid_record))	
-		# rospy.loginfo("robot IDs record: "+str(id_record))	
+		rospy.loginfo("robot IDs record: "+str(id_record))	
 		
 #-------------------------------------------------------------------------	
 		if (len(id_record)>0):
 			winner_id=revenue_record.index(max(revenue_record))
 			robots[id_record[winner_id]].sendGoal(centroid_record[winner_id])
-			rospy.loginfo(robot_namelist[id_record[winner_id]] + "  assigned to  "+str(centroid_record[winner_id]))	
+			rospy.loginfo(namespace+str(namespace_init_count+id_record[winner_id])+"  assigned to  "+str(centroid_record[winner_id]))	
 			rospy.sleep(delay_after_assignement)
 #------------------------------------------------------------------------- 
 		rate.sleep()

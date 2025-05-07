@@ -22,7 +22,7 @@
 // global variables
 nav_msgs::OccupancyGrid mapData;
 geometry_msgs::PointStamped clickedpoint;
-geometry_msgs::PointStamped exploration_goal;
+geometry_msgs::PointStamped exploration_goal, inter_point;
 visualization_msgs::Marker points,line;
 float xdim,ydim,resolution,Xstartx,Xstarty,init_map_x,init_map_y;
 
@@ -45,17 +45,14 @@ geometry_msgs::Point p;
 p.x=msg->point.x;
 p.y=msg->point.y;
 p.z=msg->point.z;
-
+// ROS_INFO_STREAM("point:"<<p.x<<p.y<<p.z);
 points.points.push_back(p);
 
 }
 
 
-
-
 int main(int argc, char **argv)
 {
-
   unsigned long init[4] = {0x123, 0x234, 0x345, 0x456}, length = 7;
   MTRand_int32 irand(init, length); // 32-bit int generator
 // this is an example of initializing by an array
@@ -65,26 +62,49 @@ int main(int argc, char **argv)
 
 // generate the same numbers as in the original C test program
   ros::init(argc, argv, "global_rrt_frontier_detector");
+  ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME,ros::console::levels::Debug);
   ros::NodeHandle nh;
   
   // fetching all parameters
   float eta,init_map_x,init_map_y,range;
-  std::string map_topic,base_frame_topic;
+  float cur_x, cur_y, x_range, y_range;
+  std::string map_topic,base_frame_topic, inter_points_topic;
   
   std::string ns;
   ns=ros::this_node::getName();
 
   ros::param::param<float>(ns+"/eta", eta, 0.5);
-  ros::param::param<std::string>(ns+"/map_topic", map_topic, "/robot_1/map"); 
+  ros::param::param<float>(ns+"/x_range", x_range, 8);
+  ros::param::param<float>(ns+"/y_range", y_range, 8);
+  ros::param::param<float>(ns+"/cur_x", cur_x, 0);
+  ros::param::param<float>(ns+"/cur_y", cur_y, 0);
+  ros::param::param<std::string>(ns+"/global_map", map_topic, "/projected_map"); 
+  ros::param::param<std::string>(ns+"/inter_points_topic", inter_points_topic, "/inter_points"); 
+
+  //!------- define the boundary of rrt exploration ---------
+  // scene 1
+  // int lx = 72;
+  // int rx =  0;
+  // int ly = 3; 
+  // int ry = -4; 
+
+  // scene 2
+  int lx = 83;
+  int rx =  5.6;
+  int ly = 40;
+  int ry = -38; 
+  //!---------------------------------------------------------
+
 //---------------------------------------------------------------
 ros::Subscriber sub= nh.subscribe(map_topic, 100 ,mapCallBack);	
 ros::Subscriber rviz_sub= nh.subscribe("/clicked_point", 100 ,rvizCallBack);	
 
 ros::Publisher targetspub = nh.advertise<geometry_msgs::PointStamped>("/detected_points", 10);
 ros::Publisher pub = nh.advertise<visualization_msgs::Marker>(ns+"_shapes", 10);
+ros::Publisher nodespub = nh.advertise<geometry_msgs::PointStamped>("/inter_points", 10);
 
 ros::Rate rate(100); 
- 
+
  
 // wait until map is received, when a map is received, mapData.header.seq will not be < 1  
 while (mapData.header.seq<1 or mapData.data.size()<1)  {  ros::spinOnce();  ros::Duration(0.1).sleep();}
@@ -126,16 +146,39 @@ line.color.a = 1.0;
 points.lifetime = ros::Duration();
 line.lifetime = ros::Duration();
 
-geometry_msgs::Point p;  
 
 
-while(points.points.size()<5)
-{
-ros::spinOnce();
+geometry_msgs::Point lefttop, righttop, rightdown, leftdown, cur;  
+lefttop.x=lx;
+lefttop.y=ly;
+points.points.push_back(lefttop);
 
-pub.publish(points) ;
-}
+righttop.x=rx;
+righttop.y=ly;
+points.points.push_back(righttop);
+ 
+rightdown.x=rx;
+rightdown.y=ry;
+points.points.push_back(rightdown);
+ 
+leftdown.x=lx;
+leftdown.y=ry;
+points.points.push_back(leftdown);
 
+// free space point
+cur.x=cur_x;
+cur.y=cur_y;
+points.points.push_back(cur);
+
+
+geometry_msgs::Point p; 
+// while(points.points.size()<5)
+// {
+// ros::spinOnce();
+
+// pub.publish(points) ;
+// }
+pub.publish(points);
 
 
 
@@ -166,7 +209,6 @@ Xstarty=(points.points[0].y+points.points[2].y)*.5;
 
 
 
-
 geometry_msgs::Point trans;
 trans=points.points[4];
 std::vector< std::vector<float>  > V; 
@@ -188,15 +230,17 @@ int i=0;
 float xr,yr;
 std::vector<float> x_rand,x_nearest,x_new;
 
-
+int isBlack = 0;
+ROS_INFO_STREAM("start global rrt:");
 // Main loop
 while (ros::ok()){
-
 
 // Sample free
 x_rand.clear();
 xr=(drand()*init_map_x)-(init_map_x*0.5)+Xstartx;
 yr=(drand()*init_map_y)-(init_map_y*0.5)+Xstarty;
+
+
 
 
 x_rand.push_back( xr ); x_rand.push_back( yr );
@@ -206,13 +250,12 @@ x_rand.push_back( xr ); x_rand.push_back( yr );
 x_nearest=Nearest(V,x_rand);
 
 // Steer
-
 x_new=Steer(x_nearest,x_rand,eta);
 
 
 // ObstacleFree    1:free     -1:unkown (frontier region)      0:obstacle
 char   checking=ObstacleFree(x_nearest,x_new,mapData);
-
+// ROS_INFO_STREAM("xnew:"<<x_new[0]<<x_new[1]<<" check:"<<checkin);
 	  if (checking==-1){
           	exploration_goal.header.stamp=ros::Time(0);
           	exploration_goal.header.frame_id=mapData.header.frame_id;
@@ -220,8 +263,8 @@ char   checking=ObstacleFree(x_nearest,x_new,mapData);
           	exploration_goal.point.y=x_new[1];
           	exploration_goal.point.z=0.0;
           	p.x=x_new[0]; 
-			p.y=x_new[1]; 
-			p.z=0.0;
+            p.y=x_new[1]; 
+            p.z=0.0;
           	points.points.push_back(p);
           	pub.publish(points) ;
           	targetspub.publish(exploration_goal);
@@ -231,6 +274,13 @@ char   checking=ObstacleFree(x_nearest,x_new,mapData);
 	  	
 	  
 	  else if (checking==1){
+        inter_point.header.stamp=ros::Time(0);
+        inter_point.header.frame_id=mapData.header.frame_id;
+        inter_point.point.x=x_new[0];
+        inter_point.point.y=x_new[1];
+        inter_point.point.z=0.0;
+        nodespub.publish(inter_point);
+        
 	 	V.push_back(x_new);
 	 	
 	 	p.x=x_new[0]; 
@@ -247,6 +297,7 @@ char   checking=ObstacleFree(x_nearest,x_new,mapData);
 
 
 pub.publish(line);  
+
 
 
    
